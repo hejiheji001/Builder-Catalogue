@@ -1,0 +1,17 @@
+global using System.Collections.Generic;
+global using System.Collections.Immutable;
+global using System.IO;
+global using System.Linq;
+global using System.Security.Cryptography;
+global using System.Text;
+global using System.Text.Json;
+global using System.Threading;
+global using BuilderCatalogue.Api.Clients;
+global using BuilderCatalogue.Api.Options;
+global using BuilderCatalogue.Api.Services;
+global using BuilderCatalogue.Data;
+global using BuilderCatalogue.ServiceDefaults;
+global using Microsoft.AspNetCore.Mvc;
+global using Microsoft.EntityFrameworkCore;
+global using Microsoft.Extensions.Hosting;
+global using Microsoft.Extensions.Options;
