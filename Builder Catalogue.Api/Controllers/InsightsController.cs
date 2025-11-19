@@ -1,4 +1,5 @@
 using BuilderCatalogue.Api.Models.Contracts;
+using BuilderCatalogue.Api.Services;
 
 namespace BuilderCatalogue.Api.Controllers;
 

@@ -1,5 +1,4 @@
-﻿
-namespace BuilderCatalogue.Api.Models.Contracts;
+﻿namespace BuilderCatalogue.Api.Models.Contracts;
 
 public record BuildableLEGOSetsResponse(string Username, int Count, IReadOnlyList<LEGOSetResponse> BuildableSets);
 

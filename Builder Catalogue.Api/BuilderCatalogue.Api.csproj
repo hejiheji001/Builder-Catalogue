@@ -14,7 +14,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Builder Catalogue.ServiceDefaults\BuilderCatalogue.ServiceDefaults.csproj" />
-    <ProjectReference Include="..\Builder Catalogue.Data\BuilderCatalogue.Data.csproj" />
   </ItemGroup>
 
   <ItemGroup>

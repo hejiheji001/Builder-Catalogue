@@ -1,7 +1,8 @@
+using BuilderCatalogue.Api.Clients;
 using BuilderCatalogue.Api.Models.Contracts;
+using BuilderCatalogue.Api.Models.Dto;
 using BuilderCatalogue.Api.Models.External;
 using BuilderCatalogue.Api.Services.Caching;
-using BuilderCatalogue.Data.Domain;
 
 namespace BuilderCatalogue.Api.Services;
 
@@ -144,9 +145,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
                 group => group.Sum(item => item.Quantity));
     }
 
-    private List<LEGOSet> ComputeBuildableSets(UserDetailApiModel userInfo)
+    private List<LEGOSetDto> ComputeBuildableSets(UserDetailApiModel userInfo)
     {
-        var buildableSets = new List<LEGOSet>();
+        var buildableSets = new List<LEGOSetDto>();
 
         var inventory = userService.BuildUserInventory(userInfo);
 
@@ -163,7 +164,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
                 if (IsBuildable(inventory, requirements))
                 {
-                    buildableSets.Add(new LEGOSet
+                    buildableSets.Add(new LEGOSetDto
                     {
                         Id = detail.Id,
                         Name = detail.Name,
@@ -262,22 +263,23 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             return true;
         }
 
-        var (requiredColor, requiredQuantity) = colorRequirements.ElementAt(index);
+        var (requiredColorId, requiredQuantity) = colorRequirements.ElementAt(index);
 
-        foreach (var color in availableColors.Keys)
+        foreach (var availableColorId in availableColors.Keys)
         {
-            if (availableColors.TryGetValue(color, out var available) && available >= requiredQuantity)
+            if (availableColors.TryGetValue(availableColorId, out var availableQuantity) && availableQuantity >= requiredQuantity)
             {
-                availableColors[color] = available - requiredQuantity;
-                assignment[requiredColor] = color;
+                availableColors[availableColorId] = availableQuantity - requiredQuantity;
+                assignment[requiredColorId] = availableColorId;
 
                 if (TryAssignColors(colorRequirements, availableColors, assignment, index + 1))
                 {
+                    availableColors[availableColorId] = availableQuantity;
                     return true;
                 }
 
-                availableColors[color] = available;
-                assignment.Remove(requiredColor);
+                availableColors[availableColorId] = availableQuantity;
+                assignment.Remove(requiredColorId);
             }
         }
 

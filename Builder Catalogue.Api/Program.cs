@@ -1,4 +1,8 @@
+using BuilderCatalogue.Api.Clients;
+using BuilderCatalogue.Api.Options;
+using BuilderCatalogue.Api.Services;
 using BuilderCatalogue.Api.Services.Caching;
+using BuilderCatalogue.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,9 +14,6 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddControllers();
 
 builder.Services.Configure<CatalogueApiOptions>(builder.Configuration.GetSection(CatalogueApiOptions.SectionName));
-
-builder.Services.AddDbContext<CatalogueDbContext>(options =>
-    options.UseInMemoryDatabase("builder-catalogue"));
 
 builder.Services.AddSingleton<ICacheService, JsonFileMemoryCache>();
 builder.Services.AddScoped<UserService>();

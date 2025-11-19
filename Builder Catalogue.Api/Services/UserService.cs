@@ -1,3 +1,4 @@
+using BuilderCatalogue.Api.Clients;
 using BuilderCatalogue.Api.Models.External;
 
 namespace BuilderCatalogue.Api.Services;
