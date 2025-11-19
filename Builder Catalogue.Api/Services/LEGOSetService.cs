@@ -1,4 +1,4 @@
-using BuilderCatalogue.Api.Clients;
+﻿using BuilderCatalogue.Api.Clients;
 using BuilderCatalogue.Api.Models.Contracts;
 using BuilderCatalogue.Api.Models.Dto;
 using BuilderCatalogue.Api.Models.External;
@@ -68,37 +68,41 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return new CollaborationResponse(username, setDetail.Id, setDetail.Name, collaborators.ToImmutable());
     }
 
-    //public async Task<CollaborationResponse> FindCollaboratorsWithInvertedIndexAsync(string username, string setName, CancellationToken cancellationToken = default)
-    //{
-    //    ArgumentException.ThrowIfNullOrWhiteSpace(username);
-    //    ArgumentException.ThrowIfNullOrWhiteSpace(setName);
+    public async Task<CollaborationResponse> FindCollaboratorsInvertedIndexAsync(string username, string setName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        ArgumentException.ThrowIfNullOrWhiteSpace(setName);
 
-    //    var setDetail = cacheService.GetFromCache<LEGOSetDetailApiResponse>(setName);
-    //    if (setDetail is null)
-    //    {
-    //        setDetail = await apiClient.GetSetAsync(setName, cancellationToken) ?? throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
-    //        cacheService.UpdateCache(setName, setDetail);
-    //    }
+        var setDetail = cacheService.GetFromCache<LEGOSetDetailApiResponse>(setName);
+        if (setDetail is null)
+        {
+            setDetail = await apiClient.GetSetAsync(setName, cancellationToken) ?? throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
+            cacheService.UpdateCache(setName, setDetail);
+        }
 
-    //    var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
-    //    var targetInventory = userService.BuildUserInventory(targetUser);
-    //    var requirements = BuildSetRequirements(setDetail);
+        var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
+        var targetInventory = userService.BuildUserInventory(targetUser);
+        var requirements = BuildSetRequirements(setDetail);
 
-    //    // Treated as a sub requirement - what is missing from the target user?
-    //    var missingPieces = ComputeMissingPieces(targetInventory, requirements);
+        // Treated as a sub requirement - what is missing from the target user?
+        var missingPieces = ComputeMissingPieces(targetInventory, requirements);
 
-    //    if (missingPieces.Count == 0)
-    //    {
-    //        return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
-    //    }
+        if (missingPieces.Pieces.Count == 0)
+        {
+            return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
+        }
 
-    //    var invertedIndex = new Dictionary<(string DesignId, string ColorId), List<string>>();
+        //Introducing an inverted index (piece → list of users with quantity) turns candidate selection into intersection/filtering,
+        //lowering effective complexity to O(P_missing + hits)
+        //Get missingPieces, for each piece, point to a list of users then Union all users
+        foreach (var piece in missingPieces.Pieces)
+        {
 
-    //    foreach (var piece in missingPieces)
-    //    {
+        }
 
-    //    }
-    //}
+
+        return null;
+    }
 
 
     public async Task<BuildSizeRecommendationResponse> GetBuildSizeRecommendationAsync(string username, double percentile, CancellationToken cancellationToken = default)
@@ -228,10 +232,14 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         foreach (var piece in requirements.Pieces)
         {
-            var owned = inventory.GetPiece(piece.PieceId, piece.ColorId)?.Count ?? 0;
-            if (piece.Count > owned)
+            var owned = inventory.GetPiece(piece.PieceId, piece.ColorId)!;
+            var ownedCount = owned.Count;
+            if (piece.Count > ownedCount)
             {
-                missing.Add(new PieceDto(piece.PieceId, piece.ColorId, piece.Count - owned));
+                missing.Add(owned with
+                {
+                    Count = piece.Count - ownedCount
+                });
             }
         }
 

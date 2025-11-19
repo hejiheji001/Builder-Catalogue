@@ -29,6 +29,7 @@ public record ColorFlexibleRequirementsDto(List<ColorFlexiblePieceDto> Pieces) :
 public record PieceDto(string PieceId, string ColorId, int Count)
 {
     public int Count { get; set; } = Count;
+    public List<string> Users { get; set; } = [];
 }
 
 public record ColorFlexiblePieceDto(string PieceId, Dictionary<string, int> ColorInfo);

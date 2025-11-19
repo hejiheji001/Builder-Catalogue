@@ -20,7 +20,10 @@ public class UserService(ICatalogueApiClient apiClient)
     public InventoryDto BuildUserInventory(UserDetailApiModel userDetail)
     {
         var pieces = userDetail.Collection
-            .SelectMany(entry => entry.Variants.Select(variant => new PieceDto(entry.PieceId, variant.Color, variant.Count))).ToList();
+            .SelectMany(entry => entry.Variants.Select(variant => new PieceDto(entry.PieceId, variant.Color, variant.Count)
+            {
+                Users = [userDetail.Username]
+            })).ToList();
         return new InventoryDto(pieces, userDetail.Id);
     }
 
