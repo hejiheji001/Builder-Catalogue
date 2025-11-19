@@ -17,9 +17,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         var LEGOSets = ComputeBuildableSets(userDetail);
 
-        userDetail.BuildableSets = [.. LEGOSets.Select(set => new LEGOSetResponse(set.Id, set.Name, set.SetNumber, set.TotalPieces))];
+        var buildableSets = LEGOSets.Select(set => new LEGOSetResponse(set.Id, set.Name, set.SetNumber, set.TotalPieces)).ToList();
 
-        return new BuildableLEGOSetsResponse(username, userDetail.BuildableSets.Count, userDetail.BuildableSets);
+        return new BuildableLEGOSetsResponse(username, buildableSets.Count, buildableSets);
     }
 
     public async Task<CollaborationResponse> FindCollaboratorsAsync(string username, string setName, CancellationToken cancellationToken = default)
@@ -41,7 +41,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         // Treated as a sub requirement - what is missing from the target user?
         var missingPieces = ComputeMissingPieces(targetInventory, requirements);
 
-        if (missingPieces.Count == 0)
+        if (missingPieces.Pieces.Count == 0)
         {
             return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
         }
@@ -67,6 +67,39 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         return new CollaborationResponse(username, setDetail.Id, setDetail.Name, collaborators.ToImmutable());
     }
+
+    //public async Task<CollaborationResponse> FindCollaboratorsWithInvertedIndexAsync(string username, string setName, CancellationToken cancellationToken = default)
+    //{
+    //    ArgumentException.ThrowIfNullOrWhiteSpace(username);
+    //    ArgumentException.ThrowIfNullOrWhiteSpace(setName);
+
+    //    var setDetail = cacheService.GetFromCache<LEGOSetDetailApiResponse>(setName);
+    //    if (setDetail is null)
+    //    {
+    //        setDetail = await apiClient.GetSetAsync(setName, cancellationToken) ?? throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
+    //        cacheService.UpdateCache(setName, setDetail);
+    //    }
+
+    //    var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
+    //    var targetInventory = userService.BuildUserInventory(targetUser);
+    //    var requirements = BuildSetRequirements(setDetail);
+
+    //    // Treated as a sub requirement - what is missing from the target user?
+    //    var missingPieces = ComputeMissingPieces(targetInventory, requirements);
+
+    //    if (missingPieces.Count == 0)
+    //    {
+    //        return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
+    //    }
+
+    //    var invertedIndex = new Dictionary<(string DesignId, string ColorId), List<string>>();
+
+    //    foreach (var piece in missingPieces)
+    //    {
+
+    //    }
+    //}
+
 
     public async Task<BuildSizeRecommendationResponse> GetBuildSizeRecommendationAsync(string username, double percentile, CancellationToken cancellationToken = default)
     {
@@ -103,15 +136,17 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         var userDetail = await userService.GetUserDetailAsync(username, cancellationToken);
         var exactInventory = userService.BuildUserInventory(userDetail);
-        var flexibleInventory = userService.BuildColorFlexibleUserInventory(userDetail);
+        var flexibleInventory = userService.BuildColorFlexibleInventory(userDetail);
         var flexibleSets = new List<ColorFlexibleLEGOSet>();
 
         foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
         {
             var exactRequirements = BuildSetRequirements(setDetail);
+            var flexibleRequirements = BuildColorFlexibleSetRequirements(setDetail);
+
             var isExactBuildable = IsBuildable(exactInventory, exactRequirements);
 
-            if (TryCreateColorFlexibleAssignment(setDetail, flexibleInventory, out var assignments, out var hasSubstitution))
+            if (TryCreateColorFlexibleAssignment(flexibleRequirements, flexibleInventory, out var assignments, out var hasSubstitution))
             {
                 if (!isExactBuildable || hasSubstitution)
                 {
@@ -123,29 +158,35 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return new BuildableLEGOSetsResponse(username, flexibleSets.Count, flexibleSets);
     }
 
-    private Dictionary<(string DesignId, string ColorId), int> BuildSetRequirements(LEGOSetDetailApiResponse setDetail)
+    private RequirementsDto BuildSetRequirements(LEGOSetDetailApiResponse setDetail)
     {
-        var cache = cacheService.GetFromCache<Dictionary<(string DesignId, string ColorId), int>>(setDetail.Id);
+        var cache = cacheService.GetFromCache<RequirementsDto>(setDetail.Id);
 
         if (cache is null)
         {
-            cache = setDetail.Pieces
+            var pieces = setDetail.Pieces
             .Where(piece => piece.Part is not null)
-            .Select(piece => new
-            {
-                DesignId = piece.Part!.DesignID,
-                ColorId = piece.Part.Material.ToString(),
-                piece.Quantity
-            })
-            .GroupBy(item => (item.DesignId, item.ColorId))
-            .ToDictionary(
-                group => group.Key,
-                group => group.Sum(item => item.Quantity));
+            .Select(piece => new PieceDto(piece.Part!.DesignID, piece.Part.Material.ToString(), piece.Quantity))
+            .ToList();
+
+            cache = new RequirementsDto(pieces);
 
             cacheService.UpdateCache(setDetail.Id, cache);
         }
 
         return cache;
+    }
+
+    private static ColorFlexibleRequirementsDto BuildColorFlexibleSetRequirements(LEGOSetDetailApiResponse setDetail)
+    {
+        var colorFlexibleSetRequirements = setDetail.Pieces
+            .GroupBy(piece => piece.Part!.DesignID)
+            .Select(group => new ColorFlexiblePieceDto(
+                group.Key,
+                group.ToDictionary(piece => piece.Part!.Material.ToString(), piece => piece.Quantity)))
+            .ToList();
+
+        return new ColorFlexibleRequirementsDto(colorFlexibleSetRequirements);
     }
 
     private List<LEGOSetDto> ComputeBuildableSets(UserDetailApiModel userInfo)
@@ -181,49 +222,43 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return buildableSets;
     }
 
-    private static Dictionary<TKey, int> ComputeMissingPieces<TKey>(Dictionary<TKey, int> inventory, Dictionary<TKey, int> requirements) where TKey : notnull
+    private static RequirementsDto ComputeMissingPieces<T>(InventoryDto inventory, T requirements) where T : InventoryDto
     {
-        var missing = new Dictionary<TKey, int>();
+        var missing = new List<PieceDto>();
 
-        foreach (var (key, requiredQuantity) in requirements)
+        foreach (var piece in requirements.Pieces)
         {
-            inventory.TryGetValue(key, out var owned);
-            if (requiredQuantity > owned)
+            var owned = inventory.GetPiece(piece.PieceId, piece.ColorId)?.Count ?? 0;
+            if (piece.Count > owned)
             {
-                missing[key] = requiredQuantity - owned;
+                missing.Add(new PieceDto(piece.PieceId, piece.ColorId, piece.Count - owned));
             }
         }
 
-        return missing;
+        return new RequirementsDto(missing);
     }
 
-    private static Dictionary<string, Dictionary<string, int>> BuildColorFlexibleSetRequirements(LEGOSetDetailApiResponse setDetail)
+    private static bool TryCreateColorFlexibleAssignment(ColorFlexibleRequirementsDto flexibleRequirements, ColorFlexibleInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
     {
-        // Key - DesignID, Value - <Key - Material, Value - Count>
-        return setDetail.Pieces
-            .GroupBy(entry => entry.Part!.DesignID)
-            .ToDictionary(group => group.Key, group => group
-                .GroupBy(variant => variant.Part!.Material.ToString())
-                .ToDictionary(key => key.Key, value => value
-                    .Sum(x => x.Quantity)));
-    }
-
-    private static bool TryCreateColorFlexibleAssignment(LEGOSetDetailApiResponse setDetail, Dictionary<string, Dictionary<string, int>> flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
-    {
-        var flexibleRequirements = BuildColorFlexibleSetRequirements(setDetail);
         var result = new List<ColorUsage>();
         hasSubstitution = false;
 
-        foreach (var (designId, colorRequirements) in flexibleRequirements)
+        foreach (var piece in flexibleRequirements.Pieces)
         {
-            if (!flexibleInventory.TryGetValue(designId, out var availableColors) || availableColors.Count == 0)
+            var availableColors = flexibleInventory.GetPieceVariants(piece.PieceId);
+            var colorRequirements = flexibleRequirements.GetPieceVariants(piece.PieceId);
+
+            if (availableColors.Count == 0)
             {
                 assignments = [];
                 hasSubstitution = false;
                 return false;
             }
 
-            if (!TryAssignColorsForDesign(designId, colorRequirements, availableColors, result, ref hasSubstitution))
+            // Order available colors by quantity descending to try larger stocks first
+            var orderedColors = availableColors.OrderByDescending(color => color.Count).ToList();
+
+            if (!TryAssignColorsForDesign(colorRequirements, orderedColors, result, ref hasSubstitution))
             {
                 assignments = [];
                 hasSubstitution = false;
@@ -232,11 +267,10 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         }
 
         assignments = result;
-
         return result.Count > 0;
     }
 
-    private static bool TryAssignColorsForDesign(string designId, Dictionary<string, int> colorRequirements, Dictionary<string, int> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
+    private static bool TryAssignColorsForDesign(List<PieceDto> colorRequirements, List<PieceDto> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
     {
         var assignment = new Dictionary<string, string>();
 
@@ -245,12 +279,12 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             return false;
         }
 
-        foreach (var (requiredColor, quantity) in colorRequirements)
+        foreach (var piece in colorRequirements)
         {
-            var usedColor = assignment[requiredColor];
-            assignments.Add(new ColorUsage(designId, requiredColor, usedColor, quantity));
+            var usedColor = assignment[piece.ColorId];
+            assignments.Add(new ColorUsage(piece.PieceId, piece.ColorId, usedColor, piece.Count));
 
-            if (!string.Equals(requiredColor, usedColor))
+            if (!string.Equals(piece.ColorId, usedColor))
             {
                 hasSubstitution = true;
             }
@@ -259,29 +293,36 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return true;
     }
 
-    private static bool TryAssignColors(Dictionary<string, int> colorRequirements, Dictionary<string, int> availableColors, Dictionary<string, string> assignment, int index)
+    private static bool TryAssignColors(List<PieceDto> colorRequirements, List<PieceDto> availableColors, Dictionary<string, string> assignment, int index)
     {
         if (index >= colorRequirements.Count)
         {
             return true;
         }
 
-        var (requiredColorId, requiredQuantity) = colorRequirements.ElementAt(index);
+        var requiredPiece = colorRequirements.ElementAt(index);
+        var requiredColorId = requiredPiece.ColorId;
+        var requiredQuantity = requiredPiece.Count;
 
-        foreach (var availableColorId in availableColors.Keys)
+        var availableColorsDic = availableColors.ToDictionary(color => color.ColorId, color => color);
+
+        foreach (var availableColorId in availableColorsDic.Keys)
         {
-            if (availableColors.TryGetValue(availableColorId, out var availableQuantity) && availableQuantity >= requiredQuantity)
+            var availablePiece = availableColorsDic[availableColorId];
+            var availableQuantity = availablePiece.Count;
+            if (availableQuantity >= requiredQuantity)
             {
-                availableColors[availableColorId] = availableQuantity - requiredQuantity;
+                availablePiece.Count = availableQuantity - requiredQuantity;
+
                 assignment[requiredColorId] = availableColorId;
 
                 if (TryAssignColors(colorRequirements, availableColors, assignment, index + 1))
                 {
-                    availableColors[availableColorId] = availableQuantity;
+                    availablePiece.Count = availableQuantity;
                     return true;
                 }
 
-                availableColors[availableColorId] = availableQuantity;
+                availablePiece.Count = availableQuantity;
                 assignment.Remove(requiredColorId);
             }
         }
@@ -289,5 +330,5 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return false;
     }
 
-    private static bool IsBuildable<TKey>(Dictionary<TKey, int> inventory, Dictionary<TKey, int> requirements) where TKey : notnull => ComputeMissingPieces(inventory, requirements).Count == 0;
+    private static bool IsBuildable<T>(InventoryDto inventory, T requirements) where T : InventoryDto => ComputeMissingPieces(inventory, requirements).Pieces.Count == 0;
 }

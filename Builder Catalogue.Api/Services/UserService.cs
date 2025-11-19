@@ -1,4 +1,5 @@
 using BuilderCatalogue.Api.Clients;
+using BuilderCatalogue.Api.Models.Dto;
 using BuilderCatalogue.Api.Models.External;
 
 namespace BuilderCatalogue.Api.Services;
@@ -16,30 +17,18 @@ public class UserService(ICatalogueApiClient apiClient)
         return await apiClient.GetUsersAsync(cancellationToken);
     }
 
-    public Dictionary<(string DesignId, string ColorId), int> BuildUserInventory(UserDetailApiModel userDetail)
+    public InventoryDto BuildUserInventory(UserDetailApiModel userDetail)
     {
-        return userDetail.Collection
-            .SelectMany(entry => entry.Variants.Select(variant => new
-            {
-                DesignId = entry.PieceId,
-                ColorId = variant.Color,
-                variant.Count
-            }))
-            .GroupBy(item => (item.DesignId, item.ColorId))
-            .ToDictionary(
-                group => group.Key,
-                group => group.Sum(item => item.Count));
+        var pieces = userDetail.Collection
+            .SelectMany(entry => entry.Variants.Select(variant => new PieceDto(entry.PieceId, variant.Color, variant.Count))).ToList();
+        return new InventoryDto(pieces, userDetail.Id);
     }
 
-    public Dictionary<string, Dictionary<string, int>> BuildColorFlexibleUserInventory(UserDetailApiModel userDetail)
+    public ColorFlexibleInventoryDto BuildColorFlexibleInventory(UserDetailApiModel userDetail)
     {
-        // Key - PieceId, Value - <Key - ColorId, Value - Count>
-        return userDetail.Collection
-            .GroupBy(entry => entry.PieceId)
-            .ToDictionary(group => group.Key, group => group
-                .SelectMany(entry => entry.Variants)
-                .GroupBy(variant => variant.Color)
-                .ToDictionary(key => key.Key, value => value
-                    .Sum(x => x.Count)));
+        var colorFlexiblePieces = userDetail.Collection
+            .Select(piece => new ColorFlexiblePieceDto(piece.PieceId, piece.Variants.ToDictionary(key => key.Color, value => value.Count))).ToList();
+
+        return new ColorFlexibleInventoryDto(colorFlexiblePieces, userDetail.Id);
     }
 }
