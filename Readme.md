@@ -7,7 +7,7 @@ This project uses **.NET 10** and **Aspire 13** to call the provided Builder Cat
 1. Which sets can a given user (e.g. `brickfan35`) build with their current inventory?
 2. Who can collaborate with `landscape-artist` to build `tropical-island`?
 3. What piece limits should `megabuilder99` use so that at least 50% of users can build their custom model?
-4. Which extra sets can `dr_crocodile` build if we allow whole-colour substitutions?
+4. Which extra sets can `dr_crocodile` build if we allow whole-color substitutions?
 
 The core logic is implemented in a small domain layer (piece dictionaries and comparison functions), exposed via a simple HTTP API hosted by Aspire.
 
@@ -18,7 +18,7 @@ The core logic is implemented in a small domain layer (piece dictionaries and co
 ### 1. Buildable sets for `brickfan35`
 
 - Fetch the user’s inventory and all set definitions from the catalogue APIs.  
-- For each set, aggregate requirements by `(designId, colourId)` and compare against the user’s inventory.  
+- For each set, aggregate requirements by `(designId, colorId)` and compare against the user’s inventory.  
 - A set is **buildable** if the user has at least the required quantity for every piece key.
 
 ### 2. Collaboration for `landscape-artist` on `tropical-island`
@@ -33,11 +33,11 @@ The core logic is implemented in a small domain layer (piece dictionaries and co
 - For each piece that `megabuilder99` owns, compute how many other users own it (and optionally its median quantity).  
 - Keep pieces that are present in at least ~50% of users and cap the usable quantity by a conservative per-piece limit.
 
-### 4. Colour-flexible sets for `dr_crocodile` (HARD)
+### 4. Color-flexible sets for `dr_crocodile` (HARD)
 
-- For each set, group pieces by original colour and compute requirements per colour.  
-- Check which target colours `dr_crocodile` can use to recolour a whole original colour while still having enough pieces.  
-- Treat this as a small matching / backtracking problem: each original colour must map to a distinct target colour; if a complete mapping exists, the set becomes buildable with some colour scheme.
+- For each set, group pieces by original color and compute requirements per color.  
+- Check which target colors `dr_crocodile` can use to recolor a whole original color while still having enough pieces.  
+- Treat this as a small matching / backtracking problem: each original color must map to a distinct target color; if a complete mapping exists, the set becomes buildable with some color scheme.
 
 ---
 

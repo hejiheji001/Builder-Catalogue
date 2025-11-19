@@ -28,10 +28,10 @@ public class InsightsController(LEGOSetService insightsService) : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("colour-flexibility/{username}", Name = "GetColourFlexibility")]
-    public async Task<ActionResult<BuildableLEGOSetsResponse>> GetColourFlexibilityAsync(string username = "dr_crocodile")
+    [HttpGet("color-flexibility/{username}", Name = "GetColorFlexibility")]
+    public async Task<ActionResult<BuildableLEGOSetsResponse>> GetColorFlexibilityAsync(string username = "dr_crocodile")
     {
-        var result = await insightsService.GetColourFlexibilityAsync(username);
+        var result = await insightsService.GetColorFlexibilityAsync(username);
         return Ok(result);
     }
 }

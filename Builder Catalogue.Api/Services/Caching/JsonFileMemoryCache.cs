@@ -14,7 +14,7 @@ public class JsonFileMemoryCache : ICacheService
 
     public JsonFileMemoryCache(IHostEnvironment environment)
     {
-        _cacheFilePath = Path.Combine(environment.ContentRootPath, "Data", "sets-cache.json");
+        _cacheFilePath = Path.Combine(environment.ContentRootPath, "CacheData", "sets-cache.json");
 
         LoadInitialCache();
     }
@@ -26,7 +26,7 @@ public class JsonFileMemoryCache : ICacheService
 
     public LEGOSetDetailApiResponse? GetSetDetailByName(string setName)
     {
-        return _cache.Where(set => string.Equals(set.Name, setName, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+        return _cache.Where(set => string.Equals(set.Name, setName)).FirstOrDefault();
     }
 
     private void LoadInitialCache()
