@@ -1,32 +1,38 @@
 using BuilderCatalogue.Api.Models.External;
+using System.Collections.Concurrent;
 
 namespace BuilderCatalogue.Api.Services.Caching;
 
-public class JsonFileMemoryCache : ICacheService
+public class SimpleMemoryCache : ICacheService
 {
     private readonly string _cacheFilePath;
-    private ImmutableArray<LEGOSetDetailApiResponse> _cache = [];
+    private readonly ConcurrentDictionary<string, object> _commonCache = [];
     private readonly JsonSerializerOptions _serializerOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         WriteIndented = true
     };
 
-    public JsonFileMemoryCache(IHostEnvironment environment)
+    public SimpleMemoryCache(IHostEnvironment environment)
     {
         _cacheFilePath = Path.Combine(environment.ContentRootPath, "CacheData", "sets-cache.json");
 
         LoadInitialCache();
     }
 
-    public IReadOnlyCollection<LEGOSetDetailApiResponse> GetSetDetails()
+    public IReadOnlyCollection<T> GetCachedEntries<T>() where T : class
     {
-        return _cache;
+        return [.. _commonCache.Values.Where(value => value is T).Cast<T>()];
     }
 
-    public LEGOSetDetailApiResponse? GetSetDetailByName(string setName)
+    public T? GetFromCache<T>(string key) where T : class
     {
-        return _cache.Where(set => string.Equals(set.Name, setName)).FirstOrDefault();
+        return _commonCache.TryGetValue(key, out var value) ? value as T : null;
+    }
+
+    public void UpdateCache<T>(string key, T cache) where T : class
+    {
+        _commonCache.TryAdd(key, cache);
     }
 
     private void LoadInitialCache()
@@ -45,7 +51,11 @@ public class JsonFileMemoryCache : ICacheService
                 return;
             }
 
-            _cache = [.. entries];
+            foreach (var entry in entries)
+            {
+                _commonCache.TryAdd(entry.Name, entry);
+            }
+
         }
         catch (Exception e)
         {

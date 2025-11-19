@@ -15,7 +15,7 @@ builder.Services.AddControllers();
 
 builder.Services.Configure<CatalogueApiOptions>(builder.Configuration.GetSection(CatalogueApiOptions.SectionName));
 
-builder.Services.AddSingleton<ICacheService, JsonFileMemoryCache>();
+builder.Services.AddSingleton<ICacheService, SimpleMemoryCache>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<LEGOSetService>();
 

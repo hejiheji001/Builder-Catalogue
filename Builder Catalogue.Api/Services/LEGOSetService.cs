@@ -27,18 +27,13 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
         ArgumentException.ThrowIfNullOrWhiteSpace(setName);
 
-        var setDetail = cacheService.GetSetDetailByName(setName);
+        var setDetail = cacheService.GetFromCache<LEGOSetDetailApiResponse>(setName);
         if (setDetail is null)
         {
-            setDetail = await apiClient.GetSetAsync(setName, cancellationToken);
-            //TODO: Update Cache - in a real-world scenario, we might want to have a background job to refresh the cache periodically.
+            setDetail = await apiClient.GetSetAsync(setName, cancellationToken) ?? throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
+            cacheService.UpdateCache(setName, setDetail);
         }
          
-        if (setDetail is null)
-        {
-            throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
-        }
-
         var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
         var targetInventory = userService.BuildUserInventory(targetUser);
         var requirements = BuildSetRequirements(setDetail);
@@ -111,7 +106,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         var flexibleInventory = userService.BuildColorFlexibleUserInventory(userDetail);
         var flexibleSets = new List<ColorFlexibleLEGOSet>();
 
-        foreach (var setDetail in cacheService.GetSetDetails())
+        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
         {
             var exactRequirements = BuildSetRequirements(setDetail);
             var isExactBuildable = IsBuildable(exactInventory, exactRequirements);
@@ -128,9 +123,13 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return new BuildableLEGOSetsResponse(username, flexibleSets.Count, flexibleSets);
     }
 
-    private static Dictionary<(string DesignId, string ColorId), int> BuildSetRequirements(LEGOSetDetailApiResponse setDetail)
+    private Dictionary<(string DesignId, string ColorId), int> BuildSetRequirements(LEGOSetDetailApiResponse setDetail)
     {
-        return setDetail.Pieces
+        var cache = cacheService.GetFromCache<Dictionary<(string DesignId, string ColorId), int>>(setDetail.Id);
+
+        if (cache is null)
+        {
+            cache = setDetail.Pieces
             .Where(piece => piece.Part is not null)
             .Select(piece => new
             {
@@ -142,6 +141,11 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             .ToDictionary(
                 group => group.Key,
                 group => group.Sum(item => item.Quantity));
+
+            cacheService.UpdateCache(setDetail.Id, cache);
+        }
+
+        return cache;
     }
 
     private List<LEGOSetDto> ComputeBuildableSets(UserDetailApiModel userInfo)
@@ -153,7 +157,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         // This call is intentionally routed through a cache abstraction so we can
         // plug in alternative providers (distributed cache, Redis, etc.)
         // without touching the evaluation flow in the future.
-        var setInfo = cacheService.GetSetDetails();
+        var setInfo = cacheService.GetCachedEntries<LEGOSetDetailApiResponse>();
 
         foreach (var detail in setInfo)
         {
