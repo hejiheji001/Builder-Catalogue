@@ -33,24 +33,18 @@ The core logic is implemented in a small domain layer (piece dictionaries and co
 - For each piece that `megabuilder99` owns, compute how many other users own it (and optionally its median quantity).  
 - Keep pieces that are present in at least ~50% of users and cap the usable quantity by a conservative per-piece limit.
 
-### 4. Color-flexible sets for `dr_crocodile` (HARD)
+### 4. Color-flexible sets for `dr_crocodile`
 
 - For each set, group pieces by original color and compute requirements per color.  
-- Check which target colors `dr_crocodile` can use to recolor a whole original color while still having enough pieces.  
-- Treat this as a small matching / backtracking problem: each original color must map to a distinct target color; if a complete mapping exists, the set becomes buildable with some color scheme.
+- Check which target colors `dr_crocodile` can use to re-color a whole original color while still having enough pieces.  
+- Treat this as a small matching / backtracking problem: each original color must map to a distinct target color; if a complete mapping exists, the set becomes buildable with color substitution.
 
 ---
 
-## Project requirements
+## Architecture and assumptions
 
-- **.NET 10 SDK**  
-- **Aspire 13** workloads installed  
-- Network access to the provided Builder Catalogue API domain  
-- `appsettings.json` or environment variable for the external API base URL, e.g.:
-
-  ```jsonc
-  {
-    "CatalogueApi": {
-      "BaseUrl": "https://<provided-api-domain>"
-    }
-  }
+- **Single-process composition**: Aspire hosts the API and background services in-process. In production we would separate the domain API, cache refreshers, and batch jobs into deployable units to isolate failures and allow independent scaling.
+- **Upstream dependency**: We assume the catalogue API is reliable and that schema changes are coordinated. Real deployments should version DTOs, add health checks, and implement retry policies on `ICatalogueApiClient`.
+- **Cache**: `JsonFileMemoryCache` loads a static JSON file at startup and never refreshes. A real cache would run on Redis, we can use `HybridCache` for example in production environment.
+- **Synchronous composition**: Controllers call the upstream API synchronously per request. For heavier workloads we would queue long-running insights or precompute aggregates asynchronously to protect tail latency.
+- **Security posture**: No authentication, authorization in current codebase. Production builds need API gateway integration, auth policies, logging, and privacy reviews.

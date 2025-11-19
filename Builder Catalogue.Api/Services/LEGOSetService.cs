@@ -7,7 +7,6 @@ using BuilderCatalogue.Api.Services.Caching;
 namespace BuilderCatalogue.Api.Services;
 
 //TODO: Use AutoMapper or Mapperly in a real project
-
 public class LEGOSetService(ICacheService cacheService, UserService userService, ICatalogueApiClient apiClient)
 {
     public async Task<BuildableLEGOSetsResponse> GetBuildableSetsAsync(string username, CancellationToken cancellationToken = default)
@@ -32,7 +31,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         if (setDetail is null)
         {
             setDetail = await apiClient.GetSetAsync(setName, cancellationToken);
-            // Update Cache - in a real-world scenario, we might want to have a background job to refresh the cache periodically.
+            //TODO: Update Cache - in a real-world scenario, we might want to have a background job to refresh the cache periodically.
         }
          
         if (setDetail is null)
@@ -58,8 +57,8 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         var collaborators = ImmutableArray.CreateBuilder<string[]>();
 
         // This is a simple greedy approach - in a real-world scenario, we might want to consider
-        // more advanced algorithms to find optimal collaborator combinations.
-        // For now, we just check each candidate individually.
+        // more advanced algorithms to find optimal collaborator combinations. e.g. find a group of users as collaborators.
+        // For now, we just check each candidate individually and make up a 2 user collaboration.
         foreach (var candidate in candidates)
         {
             var candidateInfo = await userService.GetUserDetailAsync(candidate.Username, cancellationToken);
