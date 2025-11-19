@@ -1,0 +1,34 @@
+services:
+  compose-dashboard:
+    image: "mcr.microsoft.com/dotnet/nightly/aspire-dashboard:latest"
+    environment:
+      ASPIRE_DASHBOARD_FORWARDEDHEADERS_ENABLED: "true"
+    ports:
+      - "8080:18888"
+    expose:
+      - "18889"
+    networks:
+      - "aspire"
+    restart: "always"
+  api:
+    image: "${APISERVICE_IMAGE}"
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_EMIT_EXCEPTION_LOG_ATTRIBUTES: "true"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_EMIT_EVENT_LOG_ATTRIBUTES: "true"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      ASPNETCORE_URLS: "http://*:${APISERVICE_PORT}"
+      ASPNETCORE_HTTP_PORTS: ""
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://compose-dashboard:18889"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+      OTEL_SERVICE_NAME: "apiservice"
+    ports:
+      - "${APISERVICE_HOST_PORT}:${APISERVICE_PORT}"
+    expose:
+      - "${APISERVICE_PORT}"
+    networks:
+      - "aspire"
+networks:
+  aspire:
+    driver: "bridge"
