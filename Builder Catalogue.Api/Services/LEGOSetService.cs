@@ -3,10 +3,10 @@ using BuilderCatalogue.Api.Models.Contracts;
 using BuilderCatalogue.Api.Models.Dto;
 using BuilderCatalogue.Api.Models.External;
 using BuilderCatalogue.Api.Services.Caching;
+using System.Collections.Frozen;
 
 namespace BuilderCatalogue.Api.Services;
 
-//TODO: Use AutoMapper or Mapperly in a real project
 public class LEGOSetService(ICacheService cacheService, UserService userService, ICatalogueApiClient apiClient)
 {
     public async Task<BuildableLEGOSetsResponse> GetBuildableSetsAsync(string username, CancellationToken cancellationToken = default)
@@ -41,7 +41,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         // Treated as a sub requirement - what is missing from the target user?
         var missingPieces = ComputeMissingPieces(targetInventory, requirements);
 
-        if (missingPieces.Pieces.Count == 0)
+        if (missingPieces.IsEmpty)
         {
             return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
         }
@@ -49,6 +49,23 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         var userSummaries = await userService.GetUsersAsync(cancellationToken);
         var candidates = userSummaries.Where(user => !string.Equals(user.Username, username)).ToList();
 
+        if (candidates.Count == 0)
+        {
+            return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
+        }
+
+        //var collaborators = await FindCollaboratorsNaiveAsync(candidates, username, missingPieces, cancellationToken);
+
+        //var collaborators = await FindCollaboratorsInvertedIndexAsync(candidates, username, missingPieces, cancellationToken);
+
+        var collaborators = await FindCollaboratorsInvertedIndexColumnarAsync(candidates, username, missingPieces, cancellationToken);
+
+        return new CollaborationResponse(username, setDetail.Id, setDetail.Name, collaborators);
+    }
+
+    // Baseline O(U * P) scan: check each candidate inventory and verify it covers every missing piece.
+    private async Task<ImmutableArray<string[]>> FindCollaboratorsNaiveAsync(List<UserSummaryApiModel> candidates, string username, PieceInventoryDto missingPieces, CancellationToken cancellationToken)
+    {
         var collaborators = ImmutableArray.CreateBuilder<string[]>();
 
         // This is a simple greedy approach - in a real-world scenario, we might want to consider
@@ -65,45 +82,123 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             }
         }
 
-        return new CollaborationResponse(username, setDetail.Id, setDetail.Name, collaborators.ToImmutable());
+        return collaborators.ToImmutable();
     }
 
-    public async Task<CollaborationResponse> FindCollaboratorsInvertedIndexAsync(string username, string setName, CancellationToken cancellationToken = default)
+    // Optimized path: build a piece -> users lookup once, then intersect eligible sets per missing piece.
+    private async Task<ImmutableArray<string[]>> FindCollaboratorsInvertedIndexAsync(List<UserSummaryApiModel> candidates, string username, PieceInventoryDto missingPieces, CancellationToken cancellationToken)
+    {
+        var collaborators = ImmutableArray.CreateBuilder<string[]>();
+
+        var invertedIndex = await userService.BuildUserInventoryIndexAsync(candidates, cancellationToken);
+        var eligibleUsers = FindMissingPiecesProvider(missingPieces, invertedIndex);
+
+        if (eligibleUsers.Count > 0)
+        {
+            collaborators.AddRange(eligibleUsers.Select(candidate => new[] { username, candidate }));
+        }
+
+        return collaborators.ToImmutable();
+    }
+
+    // Columnar alternative that iterates the flattened columns instead of row objects while building/intersecting.
+    private async Task<ImmutableArray<string[]>> FindCollaboratorsInvertedIndexColumnarAsync(List<UserSummaryApiModel> candidates, string username, PieceInventoryDto missingPieces, CancellationToken cancellationToken)
+    {
+        var collaborators = ImmutableArray.CreateBuilder<string[]>();
+
+        var invertedIndex = await BuildUserInventoryIndexColumnarAsync(candidates, cancellationToken);
+        var eligibleUsers = FindMissingPiecesProviderColumnar(missingPieces, invertedIndex);
+
+        if (eligibleUsers.Count > 0)
+        {
+            collaborators.AddRange(eligibleUsers.Select(candidate => new[] { username, candidate }));
+        }
+
+        return collaborators.ToImmutable();
+    }
+
+    public async Task<BuildableLEGOSetsResponse> GetColorFlexibilityAsync(string username, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
-        ArgumentException.ThrowIfNullOrWhiteSpace(setName);
 
-        var setDetail = cacheService.GetFromCache<LEGOSetDetailApiResponse>(setName);
-        if (setDetail is null)
-        {
-            setDetail = await apiClient.GetSetAsync(setName, cancellationToken) ?? throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
-            cacheService.UpdateCache(setName, setDetail);
-        }
+        var userDetail = await userService.GetUserDetailAsync(username, cancellationToken);
+        var userInventory = userService.BuildUserInventory(userDetail);
+        
+        var flexibleSets1 = GetColorFlexibleSetsNaive(userInventory);
+        var flexibleSets2 = GetColorFlexibleSetsInvertedIndex(userInventory);
+        var flexibleSets = GetColorFlexibleSetsColumnar(userInventory);
 
-        var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
-        var targetInventory = userService.BuildUserInventory(targetUser);
-        var requirements = BuildSetRequirements(setDetail);
-
-        // Treated as a sub requirement - what is missing from the target user?
-        var missingPieces = ComputeMissingPieces(targetInventory, requirements);
-
-        if (missingPieces.Pieces.Count == 0)
-        {
-            return new CollaborationResponse(username, setDetail.Id, setDetail.Name, []);
-        }
-
-        //Introducing an inverted index (piece → list of users with quantity) turns candidate selection into intersection/filtering,
-        //lowering effective complexity to O(P_missing + hits)
-        //Get missingPieces, for each piece, point to a list of users then Union all users
-        foreach (var piece in missingPieces.Pieces)
-        {
-
-        }
-
-
-        return null;
+        return new BuildableLEGOSetsResponse(username, flexibleSets.Length, flexibleSets);
     }
 
+    // Evaluate every cached set using the full flexible inventory each time.
+    private ImmutableArray<ColorFlexibleLEGOSet> GetColorFlexibleSetsNaive(PieceInventoryDto userInventory)
+    {
+        var flexibleSets = ImmutableArray.CreateBuilder<ColorFlexibleLEGOSet>();
+
+        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
+        {
+            var requirements = BuildSetRequirements(setDetail);
+
+            var isExactBuildable = IsBuildable(userInventory, requirements);
+
+            if (TryCreateColorFlexibleAssignment(requirements, userInventory, out var assignments, out var hasSubstitution))
+            {
+                if (!isExactBuildable || hasSubstitution)
+                {
+                    flexibleSets.Add(new ColorFlexibleLEGOSet(setDetail.Id, setDetail.Name, setDetail.SetNumber, setDetail.TotalPieces, assignments));
+                }
+            }
+        }
+
+        return flexibleSets.ToImmutable();
+    }
+
+    // Reuses a per-piece color availability index so each set only scans relevant colors.
+    private ImmutableArray<ColorFlexibleLEGOSet> GetColorFlexibleSetsInvertedIndex(PieceInventoryDto userInventory)
+    {
+        var flexibleSets = ImmutableArray.CreateBuilder<ColorFlexibleLEGOSet>();
+
+        var availabilityIndex = userService.BuildPieceAvailabilityIndex(userInventory);
+
+        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
+        {
+            var requirements = BuildSetRequirements(setDetail);
+            var isExactBuildable = IsBuildable(userInventory, requirements);
+
+            if (TryCreateColorFlexibleAssignment(requirements, availabilityIndex, out var assignments, out var hasSubstitution))
+            {
+                if (!isExactBuildable || hasSubstitution)
+                {
+                    flexibleSets.Add(new ColorFlexibleLEGOSet(setDetail.Id, setDetail.Name, setDetail.SetNumber, setDetail.TotalPieces, assignments));
+                }
+            }
+        }
+
+        return flexibleSets.ToImmutable();
+    }
+
+    // Column-oriented variant that walks contiguous spans from the requirement/inventory columns.
+    private ImmutableArray<ColorFlexibleLEGOSet> GetColorFlexibleSetsColumnar(PieceInventoryDto userInventory)
+    {
+        var flexibleSets = ImmutableArray.CreateBuilder<ColorFlexibleLEGOSet>();
+
+        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
+        {
+            var requirements = BuildSetRequirements(setDetail);
+            var isExactBuildable = IsBuildable(userInventory, requirements);
+
+            if (TryCreateColorFlexibleAssignmentColumnar(requirements, userInventory, out var assignments, out var hasSubstitution))
+            {
+                if (!isExactBuildable || hasSubstitution)
+                {
+                    flexibleSets.Add(new ColorFlexibleLEGOSet(setDetail.Id, setDetail.Name, setDetail.SetNumber, setDetail.TotalPieces, assignments));
+                }
+            }
+        }
+
+        return flexibleSets.ToImmutable();
+    }
 
     public async Task<BuildSizeRecommendationResponse> GetBuildSizeRecommendationAsync(string username, double percentile, CancellationToken cancellationToken = default)
     {
@@ -134,63 +229,22 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return new BuildSizeRecommendationResponse(username, threshold, candidates.Count - userSkiped, percentile);
     }
 
-    public async Task<BuildableLEGOSetsResponse> GetColorFlexibilityAsync(string username, CancellationToken cancellationToken = default)
+    private PieceInventoryDto BuildSetRequirements(LEGOSetDetailApiResponse setDetail)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(username);
-
-        var userDetail = await userService.GetUserDetailAsync(username, cancellationToken);
-        var exactInventory = userService.BuildUserInventory(userDetail);
-        var flexibleInventory = userService.BuildColorFlexibleInventory(userDetail);
-        var flexibleSets = new List<ColorFlexibleLEGOSet>();
-
-        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
-        {
-            var exactRequirements = BuildSetRequirements(setDetail);
-            var flexibleRequirements = BuildColorFlexibleSetRequirements(setDetail);
-
-            var isExactBuildable = IsBuildable(exactInventory, exactRequirements);
-
-            if (TryCreateColorFlexibleAssignment(flexibleRequirements, flexibleInventory, out var assignments, out var hasSubstitution))
-            {
-                if (!isExactBuildable || hasSubstitution)
-                {
-                    flexibleSets.Add(new ColorFlexibleLEGOSet(setDetail.Id, setDetail.Name, setDetail.SetNumber, setDetail.TotalPieces, assignments));
-                }
-            }
-        }
-
-        return new BuildableLEGOSetsResponse(username, flexibleSets.Count, flexibleSets);
-    }
-
-    private RequirementsDto BuildSetRequirements(LEGOSetDetailApiResponse setDetail)
-    {
-        var cache = cacheService.GetFromCache<RequirementsDto>(setDetail.Id);
+        var cache = cacheService.GetFromCache<PieceInventoryDto>(setDetail.Id);
 
         if (cache is null)
         {
             var pieces = setDetail.Pieces
             .Where(piece => piece.Part is not null)
-            .Select(piece => new PieceDto(piece.Part!.DesignID, piece.Part.Material.ToString(), piece.Quantity))
-            .ToList();
+            .Select(piece => new PieceInfo(piece.Part!.DesignID, piece.Part.Material.ToString(), piece.Quantity));
 
-            cache = new RequirementsDto(pieces);
+            cache = PieceInventoryDto.Create(pieces);
 
             cacheService.UpdateCache(setDetail.Id, cache);
         }
 
         return cache;
-    }
-
-    private static ColorFlexibleRequirementsDto BuildColorFlexibleSetRequirements(LEGOSetDetailApiResponse setDetail)
-    {
-        var colorFlexibleSetRequirements = setDetail.Pieces
-            .GroupBy(piece => piece.Part!.DesignID)
-            .Select(group => new ColorFlexiblePieceDto(
-                group.Key,
-                group.ToDictionary(piece => piece.Part!.Material.ToString(), piece => piece.Quantity)))
-            .ToList();
-
-        return new ColorFlexibleRequirementsDto(colorFlexibleSetRequirements);
     }
 
     private List<LEGOSetDto> ComputeBuildableSets(UserDetailApiModel userInfo)
@@ -226,47 +280,146 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return buildableSets;
     }
 
-    private static RequirementsDto ComputeMissingPieces<T>(InventoryDto inventory, T requirements) where T : InventoryDto
+    // Intersects candidate user sets (one per missing piece) until the remaining users cover every deficit.
+    private static IReadOnlyCollection<string> FindMissingPiecesProvider(PieceInventoryDto missingPieces, FrozenDictionary<PieceKey, FrozenDictionary<string, int>> index)
     {
-        var missing = new List<PieceDto>();
+        HashSet<string>? intersection = null;
 
-        foreach (var piece in requirements.Pieces)
+        // Start with the larger count of pieces for faster intersection.
+        var orderedPieces = missingPieces.Pieces.OrderBy(p => p.Count).ToList();
+        foreach (var piece in orderedPieces)
         {
-            var owned = inventory.GetPiece(piece.PieceId, piece.ColorId)!;
-            var ownedCount = owned.Count;
-            if (piece.Count > ownedCount)
+            if (!index.TryGetValue(new PieceKey(piece.PieceId, piece.ColorId), out var userCounts))
             {
-                missing.Add(owned with
+                return [];
+            }
+
+            var eligible = new HashSet<string>(userCounts.Where(pair => pair.Value >= piece.Count).Select(pair => pair.Key));
+            if (eligible.Count == 0)
+            {
+                return [];
+            }
+
+            if (intersection is null)
+            {
+                intersection = eligible;
+            }
+            else
+            {
+                intersection.IntersectWith(eligible);
+
+                if (intersection.Count == 0)
                 {
-                    Count = piece.Count - ownedCount
-                });
+                    return [];
+                }
             }
         }
 
-        return new RequirementsDto(missing);
+        return intersection is null ? Array.Empty<string>() : intersection;
     }
 
-    private static bool TryCreateColorFlexibleAssignment(ColorFlexibleRequirementsDto flexibleRequirements, ColorFlexibleInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
+    private static IReadOnlyCollection<string> FindMissingPiecesProviderColumnar(PieceInventoryDto missingPieces, FrozenDictionary<PieceKey, FrozenDictionary<string, int>> index)
+    {
+        HashSet<string>? intersection = null;
+
+        ref readonly var columns = ref missingPieces.Columns;
+        var pieceIds = columns.PieceIds;
+        var colorIds = columns.ColorIds;
+        var counts = columns.Counts;
+
+        // Reorder indices by ascending counts for better intersection performance.
+
+        //Insertion sort implementation, better performance than LINQ
+        //var ordering = Enumerable.Range(0, pieceIds.Length).ToArray();
+        //for (var i = 1; i < ordering.Length; i++)
+        //{
+        //    var keyIndex = ordering[i];
+        //    var keyCount = counts[keyIndex];
+        //    var j = i - 1;
+
+        //    while (j >= 0 && counts[ordering[j]] > keyCount)
+        //    {
+        //        ordering[j + 1] = ordering[j];
+        //        j--;
+        //    }
+
+        //    ordering[j + 1] = keyIndex;
+        //}
+
+        //LINQ based ordering, simpler but slightly less performant
+        var ordering = counts.ToArray().Select((value, index) => (value, index)).OrderBy(x => x.value).Select(x => x.index).ToArray();
+
+        foreach (var idx in ordering)
+        {
+            if (!index.TryGetValue(new PieceKey(pieceIds[idx], colorIds[idx]), out var userCounts))
+            {
+                return [];
+            }
+
+            var required = counts[idx];
+            var eligible = new HashSet<string>(userCounts.Where(pair => pair.Value >= required).Select(pair => pair.Key));
+            if (eligible.Count == 0)
+            {
+                return [];
+            }
+
+            if (intersection is null)
+            {
+                intersection = eligible;
+                continue;
+            }
+
+            intersection.IntersectWith(eligible);
+            if (intersection.Count == 0)
+            {
+                return [];
+            }
+        }
+
+        return intersection is null ? Array.Empty<string>() : intersection;
+    }
+
+    private static PieceInventoryDto ComputeMissingPieces(PieceInventoryDto inventory, PieceInventoryDto requirements)
+    {
+        var missing = new List<PieceInfo>();
+
+        foreach (var piece in requirements.Pieces)
+        {
+            inventory.TryGetCount(piece.PieceId, piece.ColorId, out var ownedCount);
+            if (piece.Count > ownedCount)
+            {
+                missing.Add(new PieceInfo(piece.PieceId, piece.ColorId, piece.Count - ownedCount));
+            }
+        }
+
+        return PieceInventoryDto.Create(missing);
+    }
+
+    // Color-flex search that clones the user's inventory per design and backtracks to find a valid assignment.
+    private static bool TryCreateColorFlexibleAssignment(PieceInventoryDto flexibleRequirements, PieceInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
     {
         var result = new List<ColorUsage>();
         hasSubstitution = false;
 
-        foreach (var piece in flexibleRequirements.Pieces)
+        foreach (var pieceId in flexibleRequirements.DistinctPieceIds)
         {
-            var availableColors = flexibleInventory.GetPieceVariants(piece.PieceId);
-            var colorRequirements = flexibleRequirements.GetPieceVariants(piece.PieceId);
-
-            if (availableColors.Count == 0)
+            var availableColors = flexibleInventory.GetVariants(pieceId);
+            if (availableColors.IsEmpty)
             {
                 assignments = [];
                 hasSubstitution = false;
                 return false;
             }
 
-            // Order available colors by quantity descending to try larger stocks first
-            var orderedColors = availableColors.OrderByDescending(color => color.Count).ToList();
+            var availableOrderedColors = DeepClone(availableColors);
 
-            if (!TryAssignColorsForDesign(colorRequirements, orderedColors, result, ref hasSubstitution))
+            //In place ordering, equals to OrderByDescending but better performance
+            availableOrderedColors.Sort((left, right) => right.Count.CompareTo(left.Count));
+
+            var colorRequirements = flexibleRequirements.GetVariants(pieceId);
+            var requirementBuckets = DeepClone(colorRequirements);
+
+            if (!TryAssignColorsForDesign(requirementBuckets, availableOrderedColors, result, ref hasSubstitution))
             {
                 assignments = [];
                 hasSubstitution = false;
@@ -278,7 +431,177 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return result.Count > 0;
     }
 
-    private static bool TryAssignColorsForDesign(List<PieceDto> colorRequirements, List<PieceDto> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
+    // Same backtracking core, but sourcing available colors from the precomputed inverted index.
+    private static bool TryCreateColorFlexibleAssignment(PieceInventoryDto flexibleRequirements, Dictionary<PieceKey, Dictionary<string, int>> flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
+    {
+        var result = new List<ColorUsage>();
+        hasSubstitution = false;
+
+        foreach (var pieceId in flexibleRequirements.DistinctPieceIds)
+        {
+            // Transform dictionary rows for this design into temporary PieceInfo instances so the downstream algorithm can reuse existing logic.
+            ReadOnlySpan<PieceInfo> availableColors = flexibleInventory.Where(x => x.Key.PieceId == pieceId).Select(x => new PieceInfo(x.Key.PieceId, x.Key.ColorId, x.Value[x.Key.ColorId])).ToArray();
+            if (availableColors.IsEmpty)
+            {
+                assignments = [];
+                hasSubstitution = false;
+                return false;
+            }
+
+            var orderedColors = DeepClone(availableColors);
+            orderedColors.Sort((left, right) => right.Count.CompareTo(left.Count));
+
+            var colorRequirements = flexibleRequirements.GetVariants(pieceId);
+            var requirementBuckets = DeepClone(colorRequirements);
+
+            if (!TryAssignColorsForDesign(requirementBuckets, orderedColors, result, ref hasSubstitution))
+            {
+                assignments = [];
+                hasSubstitution = false;
+                return false;
+            }
+        }
+
+        assignments = result;
+        return result.Count > 0;
+    }
+
+    private static bool TryCreateColorFlexibleAssignmentColumnar(PieceInventoryDto flexibleRequirements, PieceInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
+    {
+        var result = new List<ColorUsage>();
+        hasSubstitution = false;
+
+        ref readonly var requirementColumns = ref flexibleRequirements.Columns;
+        ref readonly var inventoryColumns = ref flexibleInventory.Columns;
+
+        var requirementSlices = BuildSliceTable(requirementColumns.PieceIds);
+        var inventorySlices = BuildSliceLookup(inventoryColumns.PieceIds);
+
+        foreach (var slice in requirementSlices)
+        {
+            if (!inventorySlices.TryGetValue(slice.PieceId, out var inventorySlice))
+            {
+                assignments = [];
+                hasSubstitution = false;
+                return false;
+            }
+
+            var availableColors = CloneVariants(inventoryColumns, inventorySlice);
+            if (availableColors.Count == 0)
+            {
+                assignments = [];
+                hasSubstitution = false;
+                return false;
+            }
+
+            availableColors.Sort((left, right) => right.Count.CompareTo(left.Count));
+            var requirementBucket = CloneVariants(requirementColumns, slice);
+
+            if (!TryAssignColorsForDesign(requirementBucket, availableColors, result, ref hasSubstitution))
+            {
+                assignments = [];
+                hasSubstitution = false;
+                return false;
+            }
+        }
+
+        assignments = result;
+        return result.Count > 0;
+    }
+
+    private async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexColumnarAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
+    {
+        var index = new Dictionary<PieceKey, Dictionary<string, int>>();
+
+        foreach (var summary in userSummaries)
+        {
+            var detail = await userService.GetUserDetailAsync(summary.Username, cancellationToken);
+            var inventory = userService.BuildUserInventory(detail);
+            ref readonly var columns = ref inventory.Columns;
+            var pieceIds = columns.PieceIds;
+            var colorIds = columns.ColorIds;
+            var counts = columns.Counts;
+
+            for (var i = 0; i < pieceIds.Length; i++)
+            {
+                var key = new PieceKey(pieceIds[i], colorIds[i]);
+                if (!index.TryGetValue(key, out var userCounts))
+                {
+                    userCounts = [];
+                    index[key] = userCounts;
+                }
+
+                userCounts[summary.Username] = counts[i];
+            }
+        }
+
+        return index.ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
+    }
+
+    private static List<PieceSliceInfo> BuildSliceTable(ReadOnlySpan<string> pieceIds)
+    {
+        var slices = new List<PieceSliceInfo>();
+        var index = 0;
+
+        while (index < pieceIds.Length)
+        {
+            var pieceId = pieceIds[index];
+            var start = index;
+
+            do
+            {
+                index++;
+            }
+            while (index < pieceIds.Length && string.Equals(pieceIds[index], pieceId, StringComparison.Ordinal));
+
+            slices.Add(new PieceSliceInfo(pieceId, start, index - start));
+        }
+
+        return slices;
+    }
+
+    private static Dictionary<string, PieceSliceInfo> BuildSliceLookup(ReadOnlySpan<string> pieceIds)
+    {
+        var lookup = new Dictionary<string, PieceSliceInfo>();
+        var index = 0;
+
+        while (index < pieceIds.Length)
+        {
+            var pieceId = pieceIds[index];
+            var start = index;
+
+            do
+            {
+                index++;
+            }
+            while (index < pieceIds.Length && string.Equals(pieceIds[index], pieceId));
+
+            lookup[pieceId] = new PieceSliceInfo(pieceId, start, index - start);
+        }
+
+        return lookup;
+    }
+
+    private static List<PieceInfo> CloneVariants(in PieceColumns columns, PieceSliceInfo slice)
+    {
+        var pieceIds = columns.PieceIds;
+        var colorIds = columns.ColorIds;
+        var counts = columns.Counts;
+        var clones = new List<PieceInfo>(slice.Length);
+        var end = slice.Offset + slice.Length;
+
+        for (var i = slice.Offset; i < end; i++)
+        {
+            clones.Add(new PieceInfo(pieceIds[i], colorIds[i], counts[i]));
+        }
+
+        return clones;
+    }
+
+    private readonly record struct PieceSliceInfo(string PieceId, int Offset, int Length);
+
+    // Backtracking wrapper: enforce that each required color gets assigned exactly once, recording substitutions along the way.
+    private static bool TryAssignColorsForDesign(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
     {
         var assignment = new Dictionary<string, string>();
 
@@ -301,14 +624,15 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return true;
     }
 
-    private static bool TryAssignColors(List<PieceDto> colorRequirements, List<PieceDto> availableColors, Dictionary<string, string> assignment, int index)
+    // Depth-first assignment: try every available color for the current requirement, rewinding counts as we backtrack.
+    private static bool TryAssignColors(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, Dictionary<string, string> assignment, int index)
     {
         if (index >= colorRequirements.Count)
         {
             return true;
         }
 
-        var requiredPiece = colorRequirements.ElementAt(index);
+        var requiredPiece = colorRequirements[index];
         var requiredColorId = requiredPiece.ColorId;
         var requiredQuantity = requiredPiece.Count;
 
@@ -338,5 +662,17 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return false;
     }
 
-    private static bool IsBuildable<T>(InventoryDto inventory, T requirements) where T : InventoryDto => ComputeMissingPieces(inventory, requirements).Pieces.Count == 0;
+    // Utility to clone a span of PieceInfo into a mutable list for sorting and count adjustments.
+    private static List<PieceInfo> DeepClone(ReadOnlySpan<PieceInfo> source)
+    {
+        var clones = new List<PieceInfo>(source.Length);
+        foreach (var piece in source)
+        {
+            clones.Add(new PieceInfo(piece.PieceId, piece.ColorId, piece.Count));
+        }
+
+        return clones;
+    }
+
+    private static bool IsBuildable(PieceInventoryDto inventory, PieceInventoryDto requirements) => ComputeMissingPieces(inventory, requirements).IsEmpty;
 }
