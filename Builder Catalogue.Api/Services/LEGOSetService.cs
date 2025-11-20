@@ -162,7 +162,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         var availabilityIndex = userService.BuildPieceAvailabilityIndex(userInventory);
 
-        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
+        var setDetails = cacheService.GetCachedEntries<LEGOSetDetailApiResponse>();
+
+        foreach (var setDetail in setDetails)
         {
             var requirements = BuildSetRequirements(setDetail);
             var isExactBuildable = IsBuildable(userInventory, requirements);
@@ -398,7 +400,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             var colorRequirements = flexibleRequirements.GetVariants(pieceId);
             var requirementBuckets = DeepClone(colorRequirements);
 
-            if (!TryAssignColorsForDesign(requirementBuckets, availableOrderedColors, result, ref hasSubstitution))
+            if (!TryAssignColorsForSet(requirementBuckets, availableOrderedColors, result, ref hasSubstitution))
             {
                 assignments = [];
                 hasSubstitution = false;
@@ -433,7 +435,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             var colorRequirements = flexibleRequirements.GetVariants(pieceId);
             var requirementBuckets = DeepClone(colorRequirements);
 
-            if (!TryAssignColorsForDesign(requirementBuckets, orderedColors, result, ref hasSubstitution))
+            if (!TryAssignColorsForSet(requirementBuckets, orderedColors, result, ref hasSubstitution))
             {
                 assignments = [];
                 hasSubstitution = false;
@@ -475,7 +477,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     }
 
     // Backtracking wrapper: enforce that each required color gets assigned exactly once, recording substitutions along the way.
-    private static bool TryAssignColorsForDesign(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
+    private static bool TryAssignColorsForSet(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
     {
         var assignment = new Dictionary<string, string>();
 
