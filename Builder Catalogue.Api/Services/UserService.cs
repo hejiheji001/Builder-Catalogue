@@ -1,6 +1,7 @@
 using BuilderCatalogue.Api.Clients;
 using BuilderCatalogue.Api.Models.Dto;
 using BuilderCatalogue.Api.Models.External;
+using System.Collections.Frozen;
 
 namespace BuilderCatalogue.Api.Services;
 
@@ -17,21 +18,44 @@ public class UserService(ICatalogueApiClient apiClient)
         return await apiClient.GetUsersAsync(cancellationToken);
     }
 
-    public InventoryDto BuildUserInventory(UserDetailApiModel userDetail)
+    public PieceInventoryDto BuildUserInventory(UserDetailApiModel userDetail)
     {
         var pieces = userDetail.Collection
-            .SelectMany(entry => entry.Variants.Select(variant => new PieceDto(entry.PieceId, variant.Color, variant.Count)
-            {
-                Users = [userDetail.Username]
-            })).ToList();
-        return new InventoryDto(pieces, userDetail.Id);
+            .SelectMany(entry => entry.Variants.Select(variant => new PieceInfo(entry.PieceId, variant.Color, variant.Count)));
+
+        return PieceInventoryDto.Create(pieces, userDetail.Id);
     }
 
-    public ColorFlexibleInventoryDto BuildColorFlexibleInventory(UserDetailApiModel userDetail)
+    public async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
     {
-        var colorFlexiblePieces = userDetail.Collection
-            .Select(piece => new ColorFlexiblePieceDto(piece.PieceId, piece.Variants.ToDictionary(key => key.Color, value => value.Count))).ToList();
+        var indexTasks = userSummaries.Select(async summary =>
+        {
+            var detail = await GetUserDetailAsync(summary.Username, cancellationToken);
+            var inventory = BuildUserInventory(detail);
+            return BuildPieceAvailabilityIndex(inventory);
+        });
 
-        return new ColorFlexibleInventoryDto(colorFlexiblePieces, userDetail.Id);
+        var index = await Task.WhenAll(indexTasks);
+        return index.SelectMany(dic => dic).ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
+    }
+
+    public Dictionary<PieceKey, Dictionary<string, int>> BuildPieceAvailabilityIndex(PieceInventoryDto inventory)
+    {
+        var bucket = new Dictionary<PieceKey, Dictionary<string, int>>();
+
+        foreach (var piece in inventory.Pieces)
+        {
+            var key = new PieceKey(piece.PieceId, piece.ColorId);
+
+            if (!bucket.TryGetValue(key, out var colors))
+            {
+                colors = [];
+                bucket[key] = colors;
+            }
+
+            colors[piece.ColorId] = piece.Count;
+        }
+
+        return bucket;
     }
 }
