@@ -1,5 +1,3 @@
-using BuilderCatalogue.Api.Models.Contracts;
-
 namespace BuilderCatalogue.Api.Models.External;
 
 public record UserApiModel

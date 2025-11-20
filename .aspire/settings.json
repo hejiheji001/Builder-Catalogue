@@ -1,3 +1,6 @@
 {
-  "appHostPath": "../Builder Catalogue.AppHost/BuilderCatalogue.AppHost.csproj"
+  "appHostPath": "../Builder Catalogue.AppHost/BuilderCatalogue.AppHost.csproj",
+  "features": {
+    "deployCommandEnabled": "true"
+  }
 }

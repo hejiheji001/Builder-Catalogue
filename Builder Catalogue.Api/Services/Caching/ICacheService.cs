@@ -1,5 +1,3 @@
-using BuilderCatalogue.Api.Models.External;
-
 namespace BuilderCatalogue.Api.Services.Caching;
 
 public interface ICacheService

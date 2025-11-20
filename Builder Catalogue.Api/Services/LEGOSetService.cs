@@ -262,7 +262,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     }
 
     // Intersects candidate user sets (one per missing piece) until the remaining users cover every deficit.
-    private static IReadOnlyCollection<string> FindMissingPiecesProvider(PieceInventoryDto missingPieces, FrozenDictionary<PieceKey, FrozenDictionary<string, int>> index)
+    internal static IReadOnlyCollection<string> FindMissingPiecesProvider(PieceInventoryDto missingPieces, FrozenDictionary<PieceKey, FrozenDictionary<string, int>> index)
     {
         HashSet<string>? intersection = null;
 
@@ -299,7 +299,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return intersection is null ? Array.Empty<string>() : intersection;
     }
 
-    private static IReadOnlyCollection<string> FindMissingPiecesProviderColumnar(PieceInventoryDto missingPieces, FrozenDictionary<PieceKey, FrozenDictionary<string, int>> index)
+    internal static IReadOnlyCollection<string> FindMissingPiecesProviderColumnar(PieceInventoryDto missingPieces, FrozenDictionary<PieceKey, FrozenDictionary<string, int>> index)
     {
         HashSet<string>? intersection = null;
 
@@ -377,7 +377,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     }
 
     // Color-flex search that clones the user's inventory per design and backtracks to find a valid assignment.
-    private static bool TryCreateColorFlexibleAssignment(PieceInventoryDto flexibleRequirements, PieceInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
+    internal static bool TryCreateColorFlexibleAssignment(PieceInventoryDto flexibleRequirements, PieceInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
     {
         var result = new List<ColorUsage>();
         hasSubstitution = false;
@@ -413,7 +413,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     }
 
     // Same backtracking core, but sourcing available colors from the precomputed inverted index.
-    private static bool TryCreateColorFlexibleAssignment(PieceInventoryDto flexibleRequirements, Dictionary<PieceKey, Dictionary<string, int>> flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
+    internal static bool TryCreateColorFlexibleAssignment(PieceInventoryDto flexibleRequirements, Dictionary<PieceKey, Dictionary<string, int>> flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
     {
         var result = new List<ColorUsage>();
         hasSubstitution = false;
