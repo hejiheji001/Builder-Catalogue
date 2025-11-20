@@ -125,8 +125,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         var userInventory = userService.BuildUserInventory(userDetail);
         
         var flexibleSets1 = GetColorFlexibleSetsNaive(userInventory);
-        var flexibleSets2 = GetColorFlexibleSetsInvertedIndex(userInventory);
-        var flexibleSets = GetColorFlexibleSetsColumnar(userInventory);
+        var flexibleSets = GetColorFlexibleSetsInvertedIndex(userInventory);
+
+        // TODO: Use columnar version for better performance with large inventories.
 
         return new BuildableLEGOSetsResponse(username, flexibleSets.Length, flexibleSets);
     }
@@ -167,28 +168,6 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             var isExactBuildable = IsBuildable(userInventory, requirements);
 
             if (TryCreateColorFlexibleAssignment(requirements, availabilityIndex, out var assignments, out var hasSubstitution))
-            {
-                if (!isExactBuildable || hasSubstitution)
-                {
-                    flexibleSets.Add(new ColorFlexibleLEGOSet(setDetail.Id, setDetail.Name, setDetail.SetNumber, setDetail.TotalPieces, assignments));
-                }
-            }
-        }
-
-        return flexibleSets.ToImmutable();
-    }
-
-    // Column-oriented variant that walks contiguous spans from the requirement/inventory columns.
-    private ImmutableArray<ColorFlexibleLEGOSet> GetColorFlexibleSetsColumnar(PieceInventoryDto userInventory)
-    {
-        var flexibleSets = ImmutableArray.CreateBuilder<ColorFlexibleLEGOSet>();
-
-        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
-        {
-            var requirements = BuildSetRequirements(setDetail);
-            var isExactBuildable = IsBuildable(userInventory, requirements);
-
-            if (TryCreateColorFlexibleAssignmentColumnar(requirements, userInventory, out var assignments, out var hasSubstitution))
             {
                 if (!isExactBuildable || hasSubstitution)
                 {
@@ -466,49 +445,6 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return result.Count > 0;
     }
 
-    private static bool TryCreateColorFlexibleAssignmentColumnar(PieceInventoryDto flexibleRequirements, PieceInventoryDto flexibleInventory, out IReadOnlyList<ColorUsage> assignments, out bool hasSubstitution)
-    {
-        var result = new List<ColorUsage>();
-        hasSubstitution = false;
-
-        ref readonly var requirementColumns = ref flexibleRequirements.Columns;
-        ref readonly var inventoryColumns = ref flexibleInventory.Columns;
-
-        var requirementSlices = BuildSliceTable(requirementColumns.PieceIds);
-        var inventorySlices = BuildSliceLookup(inventoryColumns.PieceIds);
-
-        foreach (var slice in requirementSlices)
-        {
-            if (!inventorySlices.TryGetValue(slice.PieceId, out var inventorySlice))
-            {
-                assignments = [];
-                hasSubstitution = false;
-                return false;
-            }
-
-            var availableColors = CloneVariants(inventoryColumns, inventorySlice);
-            if (availableColors.Count == 0)
-            {
-                assignments = [];
-                hasSubstitution = false;
-                return false;
-            }
-
-            availableColors.Sort((left, right) => right.Count.CompareTo(left.Count));
-            var requirementBucket = CloneVariants(requirementColumns, slice);
-
-            if (!TryAssignColorsForDesign(requirementBucket, availableColors, result, ref hasSubstitution))
-            {
-                assignments = [];
-                hasSubstitution = false;
-                return false;
-            }
-        }
-
-        assignments = result;
-        return result.Count > 0;
-    }
-
     private async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexColumnarAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
     {
         var index = new Dictionary<PieceKey, Dictionary<string, int>>();
@@ -537,68 +473,6 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         return index.ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
     }
-
-    private static List<PieceSliceInfo> BuildSliceTable(ReadOnlySpan<string> pieceIds)
-    {
-        var slices = new List<PieceSliceInfo>();
-        var index = 0;
-
-        while (index < pieceIds.Length)
-        {
-            var pieceId = pieceIds[index];
-            var start = index;
-
-            do
-            {
-                index++;
-            }
-            while (index < pieceIds.Length && string.Equals(pieceIds[index], pieceId, StringComparison.Ordinal));
-
-            slices.Add(new PieceSliceInfo(pieceId, start, index - start));
-        }
-
-        return slices;
-    }
-
-    private static Dictionary<string, PieceSliceInfo> BuildSliceLookup(ReadOnlySpan<string> pieceIds)
-    {
-        var lookup = new Dictionary<string, PieceSliceInfo>();
-        var index = 0;
-
-        while (index < pieceIds.Length)
-        {
-            var pieceId = pieceIds[index];
-            var start = index;
-
-            do
-            {
-                index++;
-            }
-            while (index < pieceIds.Length && string.Equals(pieceIds[index], pieceId));
-
-            lookup[pieceId] = new PieceSliceInfo(pieceId, start, index - start);
-        }
-
-        return lookup;
-    }
-
-    private static List<PieceInfo> CloneVariants(in PieceColumns columns, PieceSliceInfo slice)
-    {
-        var pieceIds = columns.PieceIds;
-        var colorIds = columns.ColorIds;
-        var counts = columns.Counts;
-        var clones = new List<PieceInfo>(slice.Length);
-        var end = slice.Offset + slice.Length;
-
-        for (var i = slice.Offset; i < end; i++)
-        {
-            clones.Add(new PieceInfo(pieceIds[i], colorIds[i], counts[i]));
-        }
-
-        return clones;
-    }
-
-    private readonly record struct PieceSliceInfo(string PieceId, int Offset, int Length);
 
     // Backtracking wrapper: enforce that each required color gets assigned exactly once, recording substitutions along the way.
     private static bool TryAssignColorsForDesign(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
