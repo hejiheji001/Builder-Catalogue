@@ -9,7 +9,7 @@ This project uses **.NET 10** and **Aspire 13** to call the provided Builder Cat
 3. What piece limits should `megabuilder99` use so that at least 50% of users can build their custom model?
 4. Which extra sets can `dr_crocodile` build if we allow whole-color substitutions?
 
-The core logic is implemented in a small domain layer (piece dictionaries and comparison functions), exposed via a simple HTTP API hosted by Aspire.
+The core logic is implemented in a small domain layer, exposed via a simple HTTP API hosted by Aspire.
 
 ---
 
