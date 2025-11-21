@@ -138,7 +138,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     {
         var flexibleSets = ImmutableArray.CreateBuilder<ColorFlexibleLEGOSet>();
 
-        foreach (var setDetail in cacheService.GetCachedEntries<LEGOSetDetailApiResponse>())
+        var setDetails = cacheService.GetCachedEntries<LEGOSetDetailApiResponse>();
+
+        foreach (var setDetail in setDetails)
         {
             var requirements = BuildSetRequirements(setDetail);
 
@@ -168,6 +170,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         foreach (var setDetail in setDetails)
         {
             var requirements = BuildSetRequirements(setDetail);
+
             var isExactBuildable = IsBuildable(userInventory, requirements);
 
             if (TryCreateColorFlexibleAssignment(requirements, availabilityIndex, out var assignments, out var hasSubstitution))
@@ -188,6 +191,8 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         {
             throw new ArgumentOutOfRangeException(nameof(percentile), percentile, "Percentile must be within (0, 1].");
         }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
 
         var userSummaries = await userService.GetUsersAsync(cancellationToken);
         var candidates = userSummaries.Where(user => !string.Equals(user.Username, username)).ToList();
@@ -452,8 +457,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     private static bool TryAssignColorsForSet(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, List<ColorUsage> assignments, ref bool hasSubstitution)
     {
         var assignment = new Dictionary<string, string>();
+        var availableLookup = availableColors.ToDictionary(color => color.ColorId, color => color);
 
-        if (!TryAssignColors(colorRequirements, availableColors, assignment, 0))
+        if (!TryAssignColors(colorRequirements, availableLookup, assignment, 0))
         {
             return false;
         }
@@ -472,8 +478,12 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         return true;
     }
 
-    // Depth-first assignment: try every available color for the current requirement, rewinding counts as we backtrack.
-    private static bool TryAssignColors(List<PieceInfo> colorRequirements, List<PieceInfo> availableColors, Dictionary<string, string> assignment, int index)
+    // Depth-first assignment: try every available color for the current requirement
+    // rewinding counts as we backtrack.
+    private static bool TryAssignColors(
+        List<PieceInfo> colorRequirements, 
+        Dictionary<string, PieceInfo> availableColors, 
+        Dictionary<string, string> assignment, int index)
     {
         if (index >= colorRequirements.Count)
         {
@@ -484,11 +494,8 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         var requiredColorId = requiredPiece.ColorId;
         var requiredQuantity = requiredPiece.Count;
 
-        var availableColorsDic = availableColors.ToDictionary(color => color.ColorId, color => color);
-
-        foreach (var availableColorId in availableColorsDic.Keys)
+        foreach (var (availableColorId, availablePiece) in availableColors)
         {
-            var availablePiece = availableColorsDic[availableColorId];
             var availableQuantity = availablePiece.Count;
             if (availableQuantity >= requiredQuantity)
             {
