@@ -70,7 +70,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         // This is a simple greedy approach - in a real-world scenario, we might want to consider
         // more advanced algorithms to find optimal collaborator combinations. e.g. find a group of users as collaborators.
-        // For now, we just check each candidate individually and make up a 2 user collaboration.
+        // For now, we just check each candidate individually.
         foreach (var candidate in candidates)
         {
             var candidateInfo = await userService.GetUserDetailAsync(candidate.Username, cancellationToken);

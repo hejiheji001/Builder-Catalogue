@@ -35,11 +35,12 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
-if (app.Environment.IsDevelopment())
+app.UseSwagger();
+app.UseSwaggerUI(options =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Builder Catalogue API v1");
+    options.RoutePrefix = string.Empty; // Serve Swagger UI at application root for easy discovery.
+});
 
 app.MapControllers();
 app.MapDefaultEndpoints();

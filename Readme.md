@@ -45,6 +45,6 @@ The core logic is implemented in a small domain layer (piece dictionaries and co
 
 - **Single-process composition**: Aspire hosts the API and background services in-process. In production we would separate the domain API, cache refreshers, and batch jobs into deployable units to isolate failures and allow independent scaling.
 - **Upstream dependency**: We assume the catalogue API is reliable and that schema changes are coordinated. Real deployments should version DTOs, add health checks, and implement retry policies on `ICatalogueApiClient`.
-- **Cache**: `JsonFileMemoryCache` loads a static JSON file at startup and never refreshes. A real cache would run on Redis, we can use `HybridCache` for example in production environment.
+- **Cache**: The system loads a static JSON file at startup and never refreshes. A real cache would run on Redis, we can use `HybridCache` for example in production environment.
 - **Synchronous composition**: Controllers call the upstream API synchronously per request. For heavier workloads we would queue long-running insights or precompute aggregates asynchronously to protect tail latency.
 - **Security posture**: No authentication, authorization in current codebase. Production builds need API gateway integration, auth policies, logging, and privacy reviews.
