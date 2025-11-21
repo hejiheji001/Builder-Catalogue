@@ -26,6 +26,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
         ArgumentException.ThrowIfNullOrWhiteSpace(setName);
+         
+        var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
+        var targetInventory = userService.BuildUserInventory(targetUser);
 
         var setDetail = cacheService.GetFromCache<LEGOSetDetailApiResponse>(setName);
         if (setDetail is null)
@@ -33,9 +36,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
             setDetail = await apiClient.GetSetAsync(setName, cancellationToken) ?? throw new ArgumentException($"Set with name '{setName}' not found.", nameof(setName));
             cacheService.UpdateCache(setName, setDetail);
         }
-         
-        var targetUser = await userService.GetUserDetailAsync(username, cancellationToken);
-        var targetInventory = userService.BuildUserInventory(targetUser);
+
         var requirements = BuildSetRequirements(setDetail);
 
         // Treated as a sub requirement - what is missing from the target user?
@@ -56,9 +57,9 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         //var collaborators = await FindCollaboratorsNaiveAsync(candidates, username, missingPieces, cancellationToken);
 
-        //var collaborators = await FindCollaboratorsInvertedIndexAsync(candidates, username, missingPieces, cancellationToken);
+        var collaborators = await FindCollaboratorsInvertedIndexAsync(candidates, username, missingPieces, cancellationToken);
 
-        var collaborators = await FindCollaboratorsInvertedIndexColumnarAsync(candidates, username, missingPieces, cancellationToken);
+        //var collaborators = await FindCollaboratorsInvertedIndexColumnarAsync(candidates, username, missingPieces, cancellationToken);
 
         return new CollaborationResponse(username, setDetail.Id, setDetail.Name, collaborators);
     }
@@ -106,7 +107,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
     {
         var collaborators = ImmutableArray.CreateBuilder<string[]>();
 
-        var invertedIndex = await BuildUserInventoryIndexColumnarAsync(candidates, cancellationToken);
+        var invertedIndex = await userService.BuildUserInventoryIndexColumnarAsync(candidates, cancellationToken);
         var eligibleUsers = FindMissingPiecesProviderColumnar(missingPieces, invertedIndex);
 
         if (eligibleUsers.Count > 0)
@@ -124,7 +125,7 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
         var userDetail = await userService.GetUserDetailAsync(username, cancellationToken);
         var userInventory = userService.BuildUserInventory(userDetail);
         
-        var flexibleSets1 = GetColorFlexibleSetsNaive(userInventory);
+        //var flexibleSets1 = GetColorFlexibleSetsNaive(userInventory);
         var flexibleSets = GetColorFlexibleSetsInvertedIndex(userInventory);
 
         // TODO: Use columnar version for better performance with large inventories.
@@ -445,35 +446,6 @@ public class LEGOSetService(ICacheService cacheService, UserService userService,
 
         assignments = result;
         return result.Count > 0;
-    }
-
-    private async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexColumnarAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
-    {
-        var index = new Dictionary<PieceKey, Dictionary<string, int>>();
-
-        foreach (var summary in userSummaries)
-        {
-            var detail = await userService.GetUserDetailAsync(summary.Username, cancellationToken);
-            var inventory = userService.BuildUserInventory(detail);
-            ref readonly var columns = ref inventory.Columns;
-            var pieceIds = columns.PieceIds;
-            var colorIds = columns.ColorIds;
-            var counts = columns.Counts;
-
-            for (var i = 0; i < pieceIds.Length; i++)
-            {
-                var key = new PieceKey(pieceIds[i], colorIds[i]);
-                if (!index.TryGetValue(key, out var userCounts))
-                {
-                    userCounts = [];
-                    index[key] = userCounts;
-                }
-
-                userCounts[summary.Username] = counts[i];
-            }
-        }
-
-        return index.ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
     }
 
     // Backtracking wrapper: enforce that each required color gets assigned exactly once, recording substitutions along the way.

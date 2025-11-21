@@ -26,20 +26,64 @@ public class UserService(ICatalogueApiClient apiClient)
         return PieceInventoryDto.Create(pieces, userDetail.Id);
     }
 
-    public async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
+    public async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexColumnarAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
     {
-        var indexTasks = userSummaries.Select(async summary =>
+        var index = new Dictionary<PieceKey, Dictionary<string, int>>();
+
+        foreach (var summary in userSummaries)
         {
             var detail = await GetUserDetailAsync(summary.Username, cancellationToken);
             var inventory = BuildUserInventory(detail);
-            return BuildPieceAvailabilityIndex(inventory);
-        });
+            ref readonly var columns = ref inventory.Columns;
+            var pieceIds = columns.PieceIds;
+            var colorIds = columns.ColorIds;
+            var counts = columns.Counts;
 
-        var index = await Task.WhenAll(indexTasks);
-        return index.SelectMany(dic => dic).ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
+            for (var i = 0; i < pieceIds.Length; i++)
+            {
+                var key = new PieceKey(pieceIds[i], colorIds[i]);
+                if (!index.TryGetValue(key, out var userCounts))
+                {
+                    userCounts = [];
+                    index[key] = userCounts;
+                }
+
+                userCounts[summary.Username] = counts[i];
+            }
+        }
+
+        return index.ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
     }
 
-    public Dictionary<PieceKey, Dictionary<string, int>> BuildPieceAvailabilityIndex(PieceInventoryDto inventory)
+    public async Task<FrozenDictionary<PieceKey, FrozenDictionary<string, int>>> BuildUserInventoryIndexAsync(IEnumerable<UserSummaryApiModel> userSummaries, CancellationToken cancellationToken)
+    {
+        var index = new Dictionary<PieceKey, Dictionary<string, int>>();
+
+        foreach (var summary in userSummaries)
+        {
+            var detail = await GetUserDetailAsync(summary.Username, cancellationToken);
+            var inventory = BuildUserInventory(detail);
+            var userIndex = BuildPieceAvailabilityIndex(inventory, summary.Username);
+
+            foreach (var (pieceKey, userCounts) in userIndex)
+            {
+                if (!index.TryGetValue(pieceKey, out var bucket))
+                {
+                    bucket = [];
+                    index[pieceKey] = bucket;
+                }
+
+                foreach (var (user, count) in userCounts)
+                {
+                    bucket[user] = count;
+                }
+            }
+        }
+
+        return index.ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value.ToFrozenDictionary());
+    }
+
+    public Dictionary<PieceKey, Dictionary<string, int>> BuildPieceAvailabilityIndex(PieceInventoryDto inventory, string username = "")
     {
         var bucket = new Dictionary<PieceKey, Dictionary<string, int>>();
 
@@ -53,7 +97,13 @@ public class UserService(ICatalogueApiClient apiClient)
                 bucket[key] = colors;
             }
 
-            colors[piece.ColorId] = piece.Count;
+            if (username != "")
+            {
+                colors[username] = piece.Count;
+            } else
+            {
+                colors[piece.ColorId] = piece.Count;
+            }
         }
 
         return bucket;
